@@ -1,10 +1,14 @@
+from pathlib import Path
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 import numpy as np, torch
 from train import Classifier
 
 app = FastAPI(title="GPU Fault Classifier", version="0.1.0")
-bundle = torch.load("artifacts/model.pt", map_location="cpu", weights_only=False); model = Classifier(); model.load_state_dict(bundle["state_dict"]); model.eval()
+MODEL_PATH = Path(__file__).resolve().parent / "artifacts" / "model.pt"
+if not MODEL_PATH.exists():
+    raise RuntimeError(f"Model artifact not found: {MODEL_PATH}. Run `python train.py` first.")
+bundle = torch.load(MODEL_PATH, map_location="cpu", weights_only=False); model = Classifier(); model.load_state_dict(bundle["state_dict"]); model.eval()
 
 class Observation(BaseModel):
     temperature: float = Field(55, ge=-20, le=150); memory_used_pct: float = Field(45, ge=0, le=100)

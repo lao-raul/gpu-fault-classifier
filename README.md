@@ -71,6 +71,25 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### macOS (Apple Silicon)
+
+macOS does not provide NVIDIA CUDA. The training script automatically uses
+Apple Metal (MPS) when available and falls back to CPU otherwise. Python 3.11
+or 3.12 is recommended for the broadest package compatibility.
+
+```bash
+brew install python@3.12
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+Do not install NVIDIA drivers or CUDA on macOS.
+
+The project currently pins NumPy below 2.0 because some PyTorch builds still
+expect the NumPy 1.x C ABI.
+
 ### Generate Data
 ```bash
 python generate_data.py
@@ -83,16 +102,36 @@ python train.py
 
 ### Start REST API
 ```bash
-uvicorn api:app --host 0.0.0.0 --port 8000
+python -m uvicorn api:app --host 127.0.0.1 --port 8800
+```
+
+The API loads `artifacts/model.pt` at startup, so run `python train.py` first.
+Using `python -m uvicorn` ensures that Uvicorn is launched from the active
+virtual environment rather than from a different Conda installation.
+
+### Start Web UI
+
+The local Gradio page provides the same interactive prediction experience as
+the notebook:
+
+```bash
+python gradio_app.py --host 127.0.0.1 --port 7860
+```
+
+Open http://127.0.0.1:7860 in a browser. To create a temporary public link,
+add `--share`:
+
+```bash
+python gradio_app.py --host 127.0.0.1 --port 7860 --share
 ```
 
 ### API Usage
 ```bash
 # Health check
-curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8800/health
 
 # Make a prediction
-curl -X POST http://127.0.0.1:8000/predict \
+curl -X POST http://127.0.0.1:8800/predict \
   -H 'Content-Type: application/json' \
   -d '{
     "temperature": 92,
@@ -107,7 +146,48 @@ curl -X POST http://127.0.0.1:8000/predict \
 ```
 
 ### API Documentation
-Visit http://localhost:8000/docs for Swagger UI.
+Visit http://127.0.0.1:8800/docs for Swagger UI.
+
+### Run Both Services
+
+FastAPI and Gradio are independent services and can run at the same time. Open
+two terminal windows, activate `.venv` in both, and run:
+
+```bash
+# Terminal 1: REST API
+python -m uvicorn api:app --host 127.0.0.1 --port 8800
+
+# Terminal 2: Web UI
+python gradio_app.py --host 127.0.0.1 --port 7860
+```
+
+Then use:
+
+```text
+REST API: http://127.0.0.1:8800/docs
+Web UI:   http://127.0.0.1:7860
+```
+
+Stop either service with `Ctrl+C`.
+
+### Troubleshooting
+
+If the error mentions `ModuleNotFoundError: No module named 'fastapi'`, the
+wrong Python environment is being used. Run:
+
+```bash
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m uvicorn api:app --host 127.0.0.1 --port 8800
+```
+
+If PyTorch reports that it was compiled for NumPy 1.x, reinstall the pinned
+NumPy version:
+
+```bash
+source .venv/bin/activate
+python -m pip install --force-reinstall "numpy<2"
+```
 
 ## Project Structure
 
@@ -117,6 +197,7 @@ Visit http://localhost:8000/docs for Swagger UI.
 | `train.py` | Training script - trains model, evaluates, saves artifacts |
 | `generate_data.py` | Data generation - creates synthetic labeled dataset |
 | `api.py` | REST API entry point - FastAPI server |
+| `gradio_app.py` | Local Gradio web interface |
 | `requirements.txt` | Python dependencies |
 | `artifacts/model.pt` | Trained model (generated after training) |
 | `data/gpu_faults.jsonl` | Training data (generated after data gen) |

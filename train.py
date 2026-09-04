@@ -1,4 +1,4 @@
-import json, os
+import json, subprocess, sys
 from pathlib import Path
 import numpy as np, torch
 from sklearn.model_selection import train_test_split
@@ -16,20 +16,30 @@ class Classifier(nn.Module):
     def forward(self, x): return self.net(x)
 
 def main():
-    if not Path("data/gpu_faults.jsonl").exists(): os.system("python generate_data.py")
+    if not Path("data/gpu_faults.jsonl").exists():
+        subprocess.run([sys.executable, "generate_data.py"], check=True)
     rows = [json.loads(x) for x in Path("data/gpu_faults.jsonl").read_text().splitlines()]
     X = np.array([[r["features"][f] for f in FEATURES] for r in rows], dtype="float32"); y = np.array([LABELS.index(r["label"]) for r in rows])
     Xtr, Xtmp, ytr, ytmp = train_test_split(X, y, test_size=.3, stratify=y, random_state=42); Xv, Xte, yv, yte = train_test_split(Xtmp, ytmp, test_size=.5, stratify=ytmp, random_state=42)
     scaler = StandardScaler().fit(Xtr); Xtr, Xv, Xte = [scaler.transform(x).astype("float32") for x in (Xtr, Xv, Xte)]
-    model = Classifier(); opt = torch.optim.AdamW(model.parameters(), lr=.003, weight_decay=1e-4); loss_fn = nn.CrossEntropyLoss()
+    if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+    print(f"training_device={device}")
+    torch.manual_seed(42)
+    model = Classifier().to(device); opt = torch.optim.AdamW(model.parameters(), lr=.003, weight_decay=1e-4); loss_fn = nn.CrossEntropyLoss()
     loader = DataLoader(TensorDataset(torch.tensor(Xtr), torch.tensor(ytr)), batch_size=64, shuffle=True)
     for _ in range(60):
         model.train()
-        for xb, yb in loader: opt.zero_grad(); loss_fn(model(xb), yb).backward(); opt.step()
+        for xb, yb in loader:
+            xb, yb = xb.to(device), yb.to(device)
+            opt.zero_grad(); loss_fn(model(xb), yb).backward(); opt.step()
     model.eval()
-    with torch.no_grad(): pred = model(torch.tensor(Xte)).argmax(1).numpy()
+    with torch.no_grad(): pred = model(torch.tensor(Xte).to(device)).argmax(1).cpu().numpy()
     print("accuracy=", accuracy_score(yte, pred), "macro_f1=", f1_score(yte, pred, average="macro")); print(classification_report(yte, pred, target_names=LABELS))
-    Path("artifacts").mkdir(exist_ok=True); torch.save({"state_dict": model.state_dict(), "mean": scaler.mean_, "scale": scaler.scale_, "features": FEATURES, "labels": LABELS}, "artifacts/model.pt")
+    Path("artifacts").mkdir(exist_ok=True); torch.save({"state_dict": model.cpu().state_dict(), "mean": scaler.mean_, "scale": scaler.scale_, "features": FEATURES, "labels": LABELS}, "artifacts/model.pt")
 
 if __name__ == "__main__": main()
-
